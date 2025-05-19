@@ -1,0 +1,41 @@
+[2025-05-19 23:26:39 TUM.txt](main.py 55): INFO index:TUM,norm_type:1-1;data_num:10
+[2025-05-19 23:26:39 TUM.txt](main.py 68): INFO dif_object:pred_v,beta_schedule:linear,beta:0.0001-0.02;epochs:201;diffusion time step:1000;loss type:huber
+build dataset,set kwargs is {'ch': 5, 'data_num': 10, 'length': 1024}
+(14640, 1, 784)
+[2025-05-19 23:26:41 TUM.txt](main.py 151): INFO condition:_cw_ch5
+[2025-05-19 23:26:41 TUM.txt](main.py 168): INFO train_num:10248;val_num:4392
+[2025-05-19 23:26:42 TUM.txt](main.py 266): INFO output_path:./output/TUM/2025_0519_232639/output/
+[2025-05-19 23:26:42 TUM.txt](main.py 282): INFO Epoch:0, Loss:0.4799; Mem:850 MB, Lr:0.0001
+[2025-05-19 23:26:49 TUM.txt](main.py 282): INFO Epoch:0, Loss:0.0311; Mem:890 MB, Lr:0.0001
+[2025-05-19 23:26:55 TUM.txt](main.py 282): INFO Epoch:0, Loss:0.0336; Mem:890 MB, Lr:0.0001
+[2025-05-19 23:27:01 TUM.txt](main.py 282): INFO Epoch:0, Loss:0.0378; Mem:890 MB, Lr:0.0001
+^CTraceback (most recent call last):
+  File "/data/jionkim/VGCDM/main.py", line 278, in <module>
+    loss = p_losses(model, batch, t, loss_type=loss_type, context=None)
+  File "/data/jionkim/VGCDM/main.py", line 225, in p_losses
+    predicted_noise = denoise_model(x_noisy, t, context=context)
+  File "/home/ubuntu/miniconda3/envs/ldns/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/ubuntu/miniconda3/envs/ldns/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/data/jionkim/VGCDM/model/diffusion/Unet1D.py", line 547, in forward
+    x = block2(x, t)
+  File "/home/ubuntu/miniconda3/envs/ldns/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/ubuntu/miniconda3/envs/ldns/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/data/jionkim/VGCDM/model/diffusion/Unet1D.py", line 154, in forward
+    h = self.block2(h)
+  File "/home/ubuntu/miniconda3/envs/ldns/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/ubuntu/miniconda3/envs/ldns/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/data/jionkim/VGCDM/model/diffusion/Unet1D.py", line 122, in forward
+    x = self.proj(x)
+  File "/home/ubuntu/miniconda3/envs/ldns/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/ubuntu/miniconda3/envs/ldns/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/data/jionkim/VGCDM/model/diffusion/Unet1D.py", line 58, in forward
+    return F.conv1d(x, normalized_weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
+KeyboardInterrupt
