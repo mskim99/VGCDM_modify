@@ -1,19 +1,16 @@
-import torch
-import numpy as np
 import math
-# from diffusion.diffusion_1d import Unet1D, GaussianDiffusion1D
-from model.diffusion.Unet1D import Unet1D_crossatt,Unet1D
+from model.diffusion.Unet1D import Unet1D_crossatt
 from model.diffusion.diffusion import GaussianDiffusion1D
+from evaluate.evaluate_utils import *
 from dataset import *
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
-import torch.nn.functional as F
-from evaluate import *
-import datetime
 import os
 from pathlib import Path
-from utils.logger import create_logger
 from torch.optim import lr_scheduler
+import umap.umap_ as umap
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '4'
 os.environ['RANK'] = '0'
@@ -36,12 +33,12 @@ def default_dir(dir):
 # Specify output directory here
 output_dir = "./output"
 default_dir(output_dir)
-Batch_Size = 32
+Batch_Size = 1
 norm_type = '1-1' # recommend 1-1
 index='TUM' # add _M for (inputs, labels,context) else (input, labels)
 data_state='outer3' # SQ_M: normal,inner(1,2,3),outer(1,2,3) SQV: NC,IF(1,2,3),OF(1,2,3)
 
-length=1024
+length=784
 data_num=10
 patch = 8 if Batch_Size >= 64 else 4
 cond_np=None
@@ -156,91 +153,66 @@ all_sampled_seqs = []
 all_psnr=[]
 all_cos=[]
 
-for batch in val_dataloader:
+for i, (inputs, labels) in enumerate(val_dataloader):
+    if i >= 16:
+        break
 
-    '''
-    val_input = batch[0].to(device).float()
-    val_conds = batch[2].to(device).float()
-    B=val_input.shape[0]
-    '''
+    val_input = np.swapaxes(inputs.detach().cpu().numpy(), 1, 2)
+    sampled_seq = diffusion.sample(batch_size=1, cond=None).detach().cpu().numpy()
+    np.save(save_path + 'result_' + str(i).zfill(2) + '.npy', arr=sampled_seq)
+    evl_out = eval_all(sampled_seq, val_input)
+    all_val_inputs.append(val_input)
+    all_sampled_seqs.append(sampled_seq)
+    rsme_seqs.append(evl_out[0])
+    all_psnr.append(evl_out[1])
+    all_cos.append(evl_out[2])
 
-    for i in range(16):
-        sampled_seq = diffusion.sample(batch_size=1, cond=None)
-        # evl_out = eval_all(sampled_seq.detach().cpu().numpy(), val_input.detach().cpu().numpy())
-        # all_val_inputs.append(val_input)
-        # all_val_conds.append(val_conds)
-        np.save(save_path + 'result_' + str(i) + '.npy' ,arr=sampled_seq.cpu().numpy())
-        all_sampled_seqs.append(sampled_seq)
-        # rsme_seqs.append(evl_out[0])
-        # all_psnr.append(evl_out[1])
-        # all_cos.append(evl_out[2])
+all_sampled_seqs = np.array(all_sampled_seqs)
+all_sampled_seqs = all_sampled_seqs[:,0,0,:]
+all_sampled_seqs = np.swapaxes(all_sampled_seqs, 0, 1)
 
-'''
-all_val_inputs = torch.cat(all_val_inputs, dim=0)
-all_val_conds = torch.cat(all_val_conds, dim=0)
-all_sampled_seqs = torch.cat(all_sampled_seqs, dim=0)
+all_val_inputs = np.array(all_val_inputs)
+all_val_inputs = all_val_inputs[:,0,0,:]
+all_val_inputs = np.swapaxes(all_val_inputs, 0, 1)
+
+# normalize gen & real data
+scaler = StandardScaler()
+data_real_scaled = scaler.fit_transform(all_val_inputs)
+data_fake_scaled = scaler.transform(all_sampled_seqs)
+
+combined_data = np.vstack([all_val_inputs, all_sampled_seqs])
+print(combined_data.shape)
+labels = np.array([0]*length + [1]*length)
+
+reducer = umap.UMAP(n_components=2, random_state=42)
+embedding = reducer.fit_transform(combined_data)
 
 all_rsme = np.concatenate(rsme_seqs, axis=None).reshape(-1)
 rsme_mean, rsme_var = get_mean_dev(all_rsme)
-print('RSME', rsme_mean, rsme_var, all_rsme)
+print('[RSME] MEAN : ' + str(rsme_mean) + ' / VAR : ' + str(rsme_var))
 
 all_psnrs = np.concatenate(all_psnr, axis=None).reshape(-1)
 psnr_mean, psnr_var = get_mean_dev(all_psnrs)
-print('PSNR', psnr_mean, psnr_var, all_psnrs)
+print('[PSNR] MEAN : ' + str(psnr_mean) + ' / VAR : ' + str(psnr_var))
 
 all_frecos = np.concatenate(all_cos, axis=None).reshape(-1)
 cos_mean, cos_var = get_mean_dev(all_frecos)
-print('fre_cos', cos_mean, cos_var, all_frecos)
-print('All_eval', rsme_mean, rsme_var, psnr_mean, psnr_var, cos_mean, cos_var)
-logger.info("All_eval-rsme:{}/{},psnr:{}/{},cos:{}/{}".format(rsme_mean, rsme_var, psnr_mean, psnr_var, cos_mean, cos_var))
+print('[COS] MEAN : ' + str(cos_mean) + ' / VAR : ' + str(cos_var))
 
-# for i in range(16):
-out_np=all_sampled_seqs[:Batch_Size].cuda().data.cpu().numpy()
-
-val_data_path=os.path.join(time_out_dir,cur_time+cond+'.npy')
-val_in=all_val_inputs[:Batch_Size].cuda().data.cpu().numpy()
-val_conds_out=all_val_conds[:Batch_Size].cuda().data.cpu().numpy()
-out_npy=np.concatenate((out_np,val_in,val_conds_out),axis=1)
-'''
-
-# out_npy=np.concatenate((out_np,val_in),axis=1)
-
-# add condition in plot when use cross attention
-'''
-if '_M' in index:
-    val_data_path=os.path.join(time_out_dir,cur_time+cond+'.npy')
-    val_output=val_input.cuda().data.cpu().numpy()
-    val_conds_out=val_conds.cuda().data.cpu().numpy()
-    out_npy=np.concatenate((out_np,val_output,val_conds_out),axis=1)
-    np.save(val_data_path,arr=out_npy)
-    plot_two_np(x=out_np,
-                y=val_output,
-                z1=None,
-                z2=val_conds_out,
-                patch=patch,
-                path=os.path.join(time_out_dir,cur_time+cond+'_time.png'),
-                show_mode='time',
-                sample_rate=sr)
-    plot_two_np(x=out_np,
-                y=val_input.cuda().data.cpu().numpy(),
-                patch=patch,
-                path=os.path.join(time_out_dir,cur_time+cond+'_fft.png'),
-                show_mode='fft',
-                sample_rate=sr)
-else:
-plot_two_np(x=out_np,
-            y=data_np,
-            path=os.path.join(time_out_dir, cur_time + cond + '_time.png'),
-            patch=patch,
-            show_mode='time',
-            sample_rate=sr)
-plot_two_np(x=out_np,
-            y=data_np,
-            patch=patch,
-            path=os.path.join(time_out_dir, cur_time + cond + '_fft.png'),
-            show_mode='fft',
-            sample_rate=sr)
-'''
-#
-# df_m,df_v=get_mean_dev(sampled_seq.cuda().data.cpu().numpy())
-# print(sampled_seq.shape) # (4, 32, 128)t
+# visualize (UMAP)
+plt.figure(figsize=(8, 6))
+plt.scatter(
+    embedding[labels == 0, 0], embedding[labels == 0, 1],
+    c='red', label='Real Data', alpha=0.7
+)
+plt.scatter(
+    embedding[labels == 1, 0], embedding[labels == 1, 1],
+    c='blue', label='Synthetic Data', alpha=0.7
+)
+plt.title("UMAP Projection")
+plt.xlabel("X")
+plt.ylabel("Y")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
