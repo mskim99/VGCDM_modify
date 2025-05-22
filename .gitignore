@@ -13,9 +13,10 @@
 /.ipynb_checkpoints/
 !/.ipynb_checkpoints/
 
-!/dataset/HS.py
 !/model/diffusion/diffusion.py
 /.ipynb_checkpoints/
 /plot_results.ipynb
 /plot.ipynb
 /.ipynb_checkpoints/
+
+*.txt

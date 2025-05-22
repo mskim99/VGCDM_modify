@@ -41,7 +41,7 @@ norm_type = '1-1' # recommend 1-1
 index='TUM' # add _M for (inputs, labels,context) else (input, labels)
 data_state='outer3' # SQ_M: normal,inner(1,2,3),outer(1,2,3) SQV: NC,IF(1,2,3),OF(1,2,3)
 
-length=1024
+length=4000
 data_num=10
 patch = 8 if Batch_Size >= 64 else 4
 
@@ -62,7 +62,7 @@ beta_schedule= 'linear' ## linear
 beta_start = 0.0001
 beta_end = 0.02
 timesteps = 1000
-epochs = 201
+epochs = 401
 loss_type='huber' # l1,l2,huber
 
 logger.info("dif_object:{},beta_schedule:{},beta:{}-{};epochs:{};diffusion time step:{};loss type:{}"
@@ -71,71 +71,7 @@ logger.info("dif_object:{},beta_schedule:{},beta:{}-{};epochs:{};diffusion time 
 #use gpu
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-if index=='SQ' or index=='SQV':
-    datasets,SQ_data,cond=build_dataset(
-        dataset_type=index,
-        b=Batch_Size,
-        normlizetype=norm_type,
-        rpm=19,
-        state=data_state, # SQ: normal,inner(1,2,3),outer(1,2,3) SQV: NC,IF(1,2,3),OF(1,2,3)
-        data_num=data_num,
-        length=length,
-        )
-    indices = np.random.choice(
-        len(SQ_data),
-        size=Batch_Size,
-        replace=False)
-    data_np = np.array(SQ_data)[indices]
-    sr = 25600
-
-elif index=='SQ_M' or index=='SQV_M':
-    datasets,SQ_data,cond,SQ_C=build_dataset(
-        dataset_type=index,
-        b=Batch_Size,
-        normlizetype=norm_type,
-        rpm=19, #SQ:9,19,29,39
-        state=data_state, # SQ_M: normal,inner(1,2,3),outer(1,2,3) SQV_M: NC,IF(1,2,3),OF(1,2,3)
-        data_num=data_num,
-        length=length,
-        )
-    indices = np.random.choice(
-        len(SQ_data),
-        size=Batch_Size,
-        replace=False)
-    data_np = np.array(SQ_data)[indices]
-    cond_np= np.array(SQ_C)[indices]
-    sr = 25600
-
-elif index=='HS_M':
-    datasets,SQ_data,cond,SQ_C=build_dataset(
-        dataset_type=index,
-        b=Batch_Size,
-        normlizetype=norm_type,
-        #rpm=19, #SQ:9,19,29,39
-        box=1,
-        speed=(100,350), # SQ_M: normal,inner(1,2,3),outer(1,2,3) SQV_M: NC,IF(1,2,3),OF(1,2,3)
-        data_num=data_num,
-        length=length,
-        ch=7,
-        )
-    indices = np.random.choice(
-        len(SQ_data),
-        size=Batch_Size,
-        replace=False)
-    data_np = np.array(SQ_data)[indices]
-    cond_np= np.array(SQ_C)[indices]
-    sr = 25600
-
-elif index=='CW':
-    datasets, data_np, cond = build_dataset(
-        dataset_type='CW',
-        normlizetype=norm_type,
-        ch=5,
-        data_num=data_num,
-        length=length,
-    )
-    sr = 12000
-elif index=="TUM":
+if index=="TUM":
     datasets, data_np, cond = build_dataset(
         dataset_type='TUM',
         normlizetype=norm_type,
@@ -143,9 +79,14 @@ elif index=="TUM":
         data_num=data_num,
         length=length,
     )
-    sr = 12000
+elif index=="TUM_COND":
+    datasets, data_np, cond = build_dataset(
+        dataset_type='TUM_COND',
+        normlizetype=norm_type,
+        ch=5,
+    )
 else:
-    raise ('unexpected data index, please choose data index form SQ,SQV,SQ_M,SQV_M,CW')
+    raise ('unexpected data index, please choose data index form TUM, TUM_COND')
 
 # plot origin data
 logger.info("condition:{}".format(cond))
@@ -222,7 +163,8 @@ def p_losses(denoise_model, x_start, t, noise=None, loss_type="l1",context=None)
         noise = torch.randn_like(x_start)
 
     x_noisy = q_sample(x_start=x_start, t=t, noise=noise)
-    predicted_noise = denoise_model(x_noisy, t, context=context)
+    # predicted_noise = denoise_model(x_noisy, t, context=context)
+    predicted_noise = denoise_model(x_noisy, t, x_self_cond=context)
 
     if loss_type == 'l1':
         loss = F.l1_loss(noise, predicted_noise)
@@ -246,7 +188,7 @@ model = Unet1D_crossatt(
 
 model.to(device)
 
-optimizer = AdamW(params=model.parameters(),lr=1e-4,betas=(0.9, 0.999), eps=1e-08,weight_decay=0.1)
+optimizer = AdamW(params=model.parameters(),lr=1e-5,betas=(0.9, 0.999), eps=1e-08,weight_decay=0.1)
 scheduler = lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.1)
 # optimizer = Adam(model.parameters(), lr=1e-4)
 
@@ -273,6 +215,7 @@ for epoch in range(epochs):
       inputs = torch.swapaxes(inputs, 1, 2)
       batch_size = inputs.shape[0]
       batch = inputs.to(device).float()
+      context = labels.to(device).float()
 
       t = torch.randint(0, timesteps, (batch_size,), device=device).long()
       loss = p_losses(model, batch, t, loss_type=loss_type, context=None)

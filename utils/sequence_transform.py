@@ -116,8 +116,6 @@ class Normalize(object):
             seq = 2*(seq-seq.min())/(seq.max()-seq.min()) + -1
         elif self.type == "mean-std" :
             seq = (seq-seq.mean())/seq.std()
-        else:
-            raise NameError('This normalization is not included!')
 
         return seq
 

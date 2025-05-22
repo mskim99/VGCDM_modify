@@ -1,13 +1,9 @@
 import numpy as np
-import pandas as pd
 from sklearn.model_selection import StratifiedShuffleSplit
 from torch.utils.data import DataLoader, Subset, random_split
 
-from .CWRU import CWRU
 from .TUM import TUM
-from .SQ import SQ, SQ_Mutli
-from .SQV import SQV_Multi, SQV
-from .HS import HS_Mutli,hs_filter_df_by_labels
+from .TUM_COND import TUM_COND
 
 
 def check_dict(key,dict):
@@ -104,134 +100,23 @@ def build_dataset(dataset_type,b=128, normlizetype = '1-1',logger=None,**kwargs)
     # For CW dataset
     # k=[0-9]
     print('build dataset,set kwargs is', kwargs)
-    if dataset_type == 'CW':
-        data_dir = "/home/lucian/Documents/datas/CW"
-        normlizetype = '1-1'
-        data_set = CWRU(data_dir, normlizetype, is_train=True, **kwargs)
-        datasets = {'train': data_set}
-        cw_data = [i[0] for i in datasets['train']]
-        cw_np = np.array(cw_data)
-        condition='_cw_ch'+str(data_set.ch)
-        return datasets,cw_np,condition
-
-    elif dataset_type == 'TUM':
-        data_dir = "/data/jionkim/Spiking-Diffusion/datasets/signal_1d_res_784"
-        normlizetype = '1-1'
+    if dataset_type == 'TUM':
+        data_dir = "/data/jionkim/signal_dataset/vibtac_res_4000_dir_X/"
+        normlizetype = 'none'
         data_set = TUM(data_dir, normlizetype, is_train=True, **kwargs)
         datasets = {'train': data_set}
         cw_data = [i[0] for i in datasets['train']]
         cw_np = np.array(cw_data)
         condition='_cw_ch'+str(data_set.ch)
         return datasets,cw_np,condition
-
-    # For SQ dataset
-    # **kwags is rpm, state
-    elif dataset_type == 'SQ':
-        ori_root = '/home/lucian/Documents/datas/Graduate_data/SQdata/dataframe.csv'
-        ori_csv_pd = pd.read_csv(ori_root)
-        labels_dict = create_labels_dict(**kwargs)
-        label_index = 'state'
-
-        datasets_train = SQ(ori_csv_pd, labels_dict, label_index, normlizetype, is_train=True, **kwargs)
-        datasets = {'train': datasets_train}
-        sq_data = []
-        for data, _, in datasets['train']:
-            sq_data.append(data)
-        indices = np.random.choice(len(sq_data), size=b, replace=False)
-        sq_np = np.array(sq_data)[indices]
-        condition =  '_sq_rpm' + str(labels_dict['rpm']) + '_' + labels_dict['state']
-        return datasets,sq_np,condition
-
-    elif dataset_type == 'SQ_M':
-        ori_root = '/home/lucian/Documents/datas/Graduate_data/SQdata/dataframe.csv'
-        ori_csv_pd = pd.read_csv(ori_root)
-        labels_dict = create_labels_dict(**kwargs)
-        if check_dict('rpm',labels_dict):
-            rpm=labels_dict.get('rpm')
-        else:
-            rpm='all_rpm'
-        if check_dict('state',labels_dict):
-            state=labels_dict.get('state')
-        else:
-            state = 'all_state'
-        label_index = 'rpm'
-
-        datasets_train = SQ_Mutli(ori_csv_pd, labels_dict, label_index, normlizetype, is_train=True, **kwargs)
-        datasets = {'train': datasets_train}
-        sq_data = []
-        sq_cond = []
-        for data, _, cond in datasets['train']:
-            sq_data.append(data)
-            sq_cond.append(cond)
-        indices = np.random.choice(len(sq_data), size=b, replace=False)
-        sq_np = np.array(sq_data)[indices]
-        sq_c=np.array(sq_cond)[indices]
-        condition =  '_sq_rpm' + str(rpm) + '_' + str(state)
-        return datasets,sq_np,condition,sq_c
-
-    elif dataset_type == 'SQV':
-        ori_root = '/home/lucian/Documents/datas/Graduate_data/SQV/dataframe.csv'
-        ori_csv_pd = pd.read_csv(ori_root)
-        labels_dict = create_labels_dict(**kwargs)
-        label_index = 'state'
-
-        datasets_train = SQV(ori_csv_pd, labels_dict, label_index, normlizetype, is_train=True, **kwargs)
-        datasets = {'train': datasets_train}
-        sq_data = []
-        for data, _, in datasets['train']:
-            sq_data.append(data)
-        indices = np.random.choice(len(sq_data), size=b, replace=False)
-        sq_np = np.array(sq_data)[indices]
-        condition =  '_sq_' + labels_dict['state']
-        return datasets,sq_np,condition
-
-    elif dataset_type == 'SQV_M':
-        ori_root = '/home/lucian/Documents/datas/Graduate_data/SQV/dataframe.csv'
-        ori_csv_pd = pd.read_csv(ori_root)
-        labels_dict = create_labels_dict(**kwargs)
-        label_index = 'state'
-        print('kwargs',kwargs)
-        datasets_train = SQV_Multi(ori_csv_pd, labels_dict, label_index, normlizetype, is_train=True,**kwargs)
-        datasets = {'train': datasets_train}
-        sqv_data = []
-        sqv_cond = []
-        for data, _, cond in datasets['train']:
-            sqv_data.append(data)
-            sqv_cond.append(cond)
-        indices = np.random.choice(len(sqv_data), size=b, replace=False)
-        sqv_np = np.array(sqv_data)[indices]
-        sqv_c = np.array(sqv_cond)[indices]
-        condition = '_sqv_multi_' + labels_dict['state']
-        return datasets,sqv_np,condition,sqv_c
-
-    elif dataset_type == 'HS_M':
-        ori_root = '/home/lucian/Documents/datas/Graduate_data/Highspeed_train/dataframe.csv'
-        ori_csv_pd = pd.read_csv(ori_root)
-        labels_dict = create_labels_dict(**kwargs)
-        df_out = hs_filter_df_by_labels(ori_csv_pd,labels_dict)
-        if check_dict('speed',labels_dict):
-            speed=labels_dict.get('speed')
-            kwargs.pop('speed',None)
-        else:
-            speed='all_speed'
-        print(kwargs)
-        if check_dict('box',labels_dict):
-            kwargs.pop('box',None)
-        print(kwargs)
-
-        datasets_train = HS_Mutli(df_out, normlizetype, is_train=True, **kwargs)
-        datasets = {'train': datasets_train}
-        hs_data = []
-        hs_cond = []
-        for data, _, cond in datasets['train']:
-            hs_data.append(data)
-            hs_cond.append(cond)
-        indices = np.random.choice(len(hs_data), size=b, replace=False)
-        hs_np = np.array(hs_data)[indices]
-        hs_c=np.array(hs_cond)[indices]
-        condition =  '_hs_speed_' + str(speed[0])+'_'+str(speed[1]) +'kmh'
-        return datasets,hs_np,condition,hs_c
-
+    elif dataset_type == 'TUM_COND':
+        data_dir = "/data/jionkim/signal_dataset/npy_part_res_4000_dir_X/"
+        normlizetype = 'none'
+        data_set = TUM_COND(data_dir, normlizetype, is_train=True, **kwargs)
+        datasets = {'train': data_set}
+        cw_data = [i[0] for i in datasets['train']]
+        cw_np = np.array(cw_data)
+        condition='_cw_ch'+str(data_set.ch)
+        return datasets,cw_np,condition
     else:
-        print("Invalid dataset_type. Choose 'CW','SQ','SQ_M or 'SQV','SQV_M','HS_M'")
-
+        print("Invalid dataset_type. Choose 'TUM','TUM_COND'")

@@ -1,4 +1,6 @@
 import glob
+import os.path
+
 import pandas as pd
 from sklearn.model_selection import StratifiedShuffleSplit
 from torch.utils.data import Dataset, DataLoader, Subset
@@ -14,13 +16,16 @@ def data_load(root, label):
 
     file_list = glob.glob(root + '/*.npy')
     data = []
+    label = []
     for file_name in file_list:
         data_p = np.load(file_name)
         data_p = np.expand_dims(data_p, axis=1)
         data.append(data_p)
-    lab = [label] * len(data)
 
-    return data, lab
+        idx = int(os.path.splitext(os.path.basename(file_name))[0][-2:])
+        label.append(idx)
+
+    return data, label
 
 
 def data_transforms(dataset_type="train", normlize_type="-1-1"):
@@ -43,9 +48,9 @@ def data_transforms(dataset_type="train", normlize_type="-1-1"):
     }
     return transforms[dataset_type]
 
-class TUM(Dataset):
+class TUM_COND(Dataset):
 
-    def __init__(self, data_dir, normlizetype, is_train=True,ch=None,**kwargs):
+    def __init__(self, data_dir, normlizetype, is_train=True,ch=None):
         self.data_dir = data_dir
         self.normlizetype = normlizetype
         self.is_train = is_train

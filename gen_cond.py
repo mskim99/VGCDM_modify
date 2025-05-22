@@ -1,4 +1,7 @@
 import math
+
+import torch
+
 from model.diffusion.Unet1D import Unet1D_crossatt
 from model.diffusion.diffusion import GaussianDiffusion1D
 from evaluate.evaluate_utils import *
@@ -129,90 +132,13 @@ save_path = '/data/jionkim/VGCDM/output/' + index + '/' + path_name + '/output/'
 print("output_path:{}".format(save_path))
 Path(save_path).mkdir(parents=True, exist_ok=True)
 
-rsme_seqs= []
-all_val_inputs = []
-all_val_conds = []
-all_sampled_seqs = []
-all_psnr=[]
-all_cos=[]
+for j in range (0, 16):
+    all_sampled_seqs = []
+    for i in range (0, 12):
+        print(i)
+        idx = torch.Tensor([i])
+        sampled_seq = diffusion.sample(batch_size=1, cond=idx).detach().cpu().numpy()
+        all_sampled_seqs.append(sampled_seq)
 
-for i, (inputs, labels) in enumerate(val_dataloader):
-    if i >= 360:
-        break
-
-    val_input = np.swapaxes(inputs.detach().cpu().numpy(), 1, 2)
-    sampled_seq = diffusion.sample(batch_size=1, cond=labels).detach().cpu().numpy()
-    np.save(save_path + 'result_' + str(i).zfill(3) + '.npy', arr=sampled_seq)
-    evl_out = eval_all(sampled_seq, val_input)
-    all_val_inputs.append(val_input)
-    all_sampled_seqs.append(sampled_seq)
-    rsme_seqs.append(evl_out[0])
-    all_psnr.append(evl_out[1])
-    all_cos.append(evl_out[2])
-
-all_sampled_seqs = np.array(all_sampled_seqs)
-all_sampled_seqs = all_sampled_seqs[:,0,0,:]
-all_sampled_seqs = np.swapaxes(all_sampled_seqs, 0, 1)
-
-all_val_inputs = np.array(all_val_inputs)
-all_val_inputs = all_val_inputs[:,0,0,:]
-all_val_inputs = np.swapaxes(all_val_inputs, 0, 1)
-
-# normalize gen & real data
-scaler = StandardScaler()
-data_real_scaled = scaler.fit_transform(all_val_inputs)
-data_fake_scaled = scaler.transform(all_sampled_seqs)
-
-combined_data = np.vstack([all_val_inputs, all_sampled_seqs])
-print(combined_data.shape)
-labels = np.array([0]*length + [1]*length)
-
-reducer = umap.UMAP(n_components=2, random_state=42)
-embedding = reducer.fit_transform(combined_data)
-
-pca = PCA(n_components=2)
-pca_embedding = pca.fit_transform(combined_data)
-
-all_rsme = np.concatenate(rsme_seqs, axis=None).reshape(-1)
-rsme_mean, rsme_var = get_mean_dev(all_rsme)
-print('[RSME] MEAN : ' + str(rsme_mean) + ' / VAR : ' + str(rsme_var))
-
-all_psnrs = np.concatenate(all_psnr, axis=None).reshape(-1)
-psnr_mean, psnr_var = get_mean_dev(all_psnrs)
-print('[PSNR] MEAN : ' + str(psnr_mean) + ' / VAR : ' + str(psnr_var))
-
-all_frecos = np.concatenate(all_cos, axis=None).reshape(-1)
-cos_mean, cos_var = get_mean_dev(all_frecos)
-print('[COS] MEAN : ' + str(cos_mean) + ' / VAR : ' + str(cos_var))
-
-# visualize (PCA)
-plt.subplot(1, 2, 1)
-plt.scatter(pca_embedding[labels == 0, 0], pca_embedding[labels == 0, 1],
-            c='red', label='Real Data', alpha=0.7)
-plt.scatter(pca_embedding[labels == 1, 0], pca_embedding[labels == 1, 1],
-            c='blue', label='Synthetic Data', alpha=0.7)
-plt.title("PCA Projection")
-plt.xlabel("PC1")
-plt.ylabel("PC2")
-plt.legend()
-plt.grid(True)
-
-# visualize (UMAP)
-plt.subplot(1, 2, 2)
-plt.scatter(
-    embedding[labels == 0, 0], embedding[labels == 0, 1],
-    c='red', label='Real Data', alpha=0.7
-)
-plt.scatter(
-    embedding[labels == 1, 0], embedding[labels == 1, 1],
-    c='blue', label='Synthetic Data', alpha=0.7
-)
-plt.title("UMAP Projection")
-plt.xlabel("X")
-plt.ylabel("Y")
-plt.legend()
-plt.grid(True)
-
-plt.tight_layout()
-# plt.show()
-plt.savefig(save_path + 'proj_res.png')
+    final_data = np.array(all_sampled_seqs)
+    np.save(save_path + 'final_result_' + str(j).zfill(2) + '.npy', arr=final_data)
