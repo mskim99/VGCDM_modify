@@ -175,7 +175,7 @@ class GaussianDiffusion1D(nn.Module):
     def predict_start_from_v(self, x_t, t, v):
         return (
             extract(self.sqrt_alphas_cumprod, t, x_t.shape) * x_t -
-            extract(self.sqrt_one_minus_alphas_cumprod, t, x_t.shape) * v
+            extract(self.sqrt_one_minus_alphas_cumprod, t, x_t.shape) * v[0]
         )
 
     def q_posterior(self, x_start, x_t, t):

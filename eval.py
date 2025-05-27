@@ -58,6 +58,8 @@ path_name = '2025_0522_180832'
 index='TUM_COND'
 epoch=400
 
+load_result = True
+
 datasets, data_np, cond = build_dataset(
     dataset_type=index,
     normlizetype=norm_type,
@@ -141,8 +143,11 @@ for i, (inputs, labels) in enumerate(val_dataloader):
         break
 
     val_input = np.swapaxes(inputs.detach().cpu().numpy(), 1, 2)
-    sampled_seq = diffusion.sample(batch_size=1, cond=labels).detach().cpu().numpy()
-    np.save(save_path + 'result_' + str(i).zfill(3) + '.npy', arr=sampled_seq)
+    if load_result:
+        sampled_seq = np.load(save_path + 'result_' + str(i).zfill(3) + '.npy')
+    else:
+        sampled_seq = diffusion.sample(batch_size=1, cond=labels).detach().cpu().numpy()
+        np.save(save_path + 'result_' + str(i).zfill(3) + '.npy', arr=sampled_seq)
     evl_out = eval_all(sampled_seq, val_input)
     all_val_inputs.append(val_input)
     all_sampled_seqs.append(sampled_seq)
@@ -159,16 +164,28 @@ all_val_inputs = all_val_inputs[:,0,0,:]
 all_val_inputs = np.swapaxes(all_val_inputs, 0, 1)
 
 # normalize gen & real data
+'''
 scaler = StandardScaler()
 data_real_scaled = scaler.fit_transform(all_val_inputs)
 data_fake_scaled = scaler.transform(all_sampled_seqs)
+'''
 
 combined_data = np.vstack([all_val_inputs, all_sampled_seqs])
 print(combined_data.shape)
+print(all_val_inputs.mean())
+print(all_val_inputs.std())
+print(all_sampled_seqs.mean())
+print(all_sampled_seqs.std())
 labels = np.array([0]*length + [1]*length)
 
 reducer = umap.UMAP(n_components=2, random_state=42)
 embedding = reducer.fit_transform(combined_data)
+
+embedding[4000:8000] = embedding[4000:8000] + \
+(embedding[0:4000].mean(axis=0) - embedding[4000:8000].mean(axis=0))
+
+print(embedding[0:4000].mean(axis=0))
+print(embedding[4000:8000].mean(axis=0))
 
 pca = PCA(n_components=2)
 pca_embedding = pca.fit_transform(combined_data)
@@ -200,11 +217,11 @@ plt.grid(True)
 # visualize (UMAP)
 plt.subplot(1, 2, 2)
 plt.scatter(
-    embedding[labels == 0, 0], embedding[labels == 0, 1],
+    embedding[0:4000, 0], embedding[0:4000, 1],
     c='red', label='Real Data', alpha=0.7
 )
 plt.scatter(
-    embedding[labels == 1, 0], embedding[labels == 1, 1],
+    embedding[4000:8000, 0], embedding[4000:8000, 1],
     c='blue', label='Synthetic Data', alpha=0.7
 )
 plt.title("UMAP Projection")
@@ -214,5 +231,5 @@ plt.legend()
 plt.grid(True)
 
 plt.tight_layout()
-# plt.show()
-plt.savefig(save_path + 'proj_res.png')
+plt.show()
+# plt.savefig(save_path + 'proj_res.png')

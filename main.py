@@ -1,8 +1,8 @@
 import torch
 import numpy as np
 import math
-# from diffusion.diffusion_1d import Unet1D, GaussianDiffusion1D
-from model.diffusion.Unet1D import Unet1D_crossatt,Unet1D
+# from model.diffusion.Unet1D import Unet1D_crossatt
+from model.diffusion.Unet1D_SNN import Unet1D_crossatt
 from model.diffusion.diffusion import GaussianDiffusion1D
 from dataset import *
 from torch.utils.data import DataLoader
@@ -38,13 +38,12 @@ output_dir = "./output"
 default_dir(output_dir)
 Batch_Size = 32
 norm_type = '1-1' # recommend 1-1
-index='TUM' # add _M for (inputs, labels,context) else (input, labels)
+index='TUM_COND' # add _M for (inputs, labels,context) else (input, labels)
 data_state='outer3' # SQ_M: normal,inner(1,2,3),outer(1,2,3) SQV: NC,IF(1,2,3),OF(1,2,3)
 
 length=4000
 data_num=10
 patch = 8 if Batch_Size >= 64 else 4
-
 
 cond_np=None
 # time
@@ -163,8 +162,7 @@ def p_losses(denoise_model, x_start, t, noise=None, loss_type="l1",context=None)
         noise = torch.randn_like(x_start)
 
     x_noisy = q_sample(x_start=x_start, t=t, noise=noise)
-    # predicted_noise = denoise_model(x_noisy, t, context=context)
-    predicted_noise = denoise_model(x_noisy, t, x_self_cond=context)
+    predicted_noise = denoise_model(x_noisy, t, context=context)
 
     if loss_type == 'l1':
         loss = F.l1_loss(noise, predicted_noise)
@@ -172,6 +170,24 @@ def p_losses(denoise_model, x_start, t, noise=None, loss_type="l1",context=None)
         loss = F.mse_loss(noise, predicted_noise)
     elif loss_type == "huber":
         loss = F.smooth_l1_loss(noise, predicted_noise)
+    else:
+        raise NotImplementedError()
+
+    return loss
+
+def p_losses_spk(denoise_model, x_start, t, noise=None, loss_type="l1",context=None):
+    if noise is None:
+        noise = torch.randn_like(x_start)
+
+    x_noisy = q_sample(x_start=x_start, t=t, noise=noise)
+    pn_spk, pn_mem = denoise_model(x_noisy, t, context=context)
+
+    if loss_type == 'l1':
+        loss = F.l1_loss(noise, pn_spk)
+    elif loss_type == 'l2':
+        loss = F.mse_loss(noise, pn_spk)
+    elif loss_type == "huber":
+        loss = F.smooth_l1_loss(noise, pn_spk)
     else:
         raise NotImplementedError()
 
@@ -218,7 +234,8 @@ for epoch in range(epochs):
       context = labels.to(device).float()
 
       t = torch.randint(0, timesteps, (batch_size,), device=device).long()
-      loss = p_losses(model, batch, t, loss_type=loss_type, context=None)
+      # loss = p_losses(model, batch, t, loss_type=loss_type, context=None)
+      loss = p_losses_spk(model, batch, t, loss_type=loss_type, context=None)
       if step % 100 == 0:
         learning_rate = optimizer.param_groups[0]['lr']
         memory_used = torch.cuda.max_memory_allocated() / (1024.0 * 1024.0)
