@@ -15,7 +15,7 @@ from pathlib import Path
 from utils.logger import create_logger
 from torch.optim import lr_scheduler
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '4'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 os.environ['RANK'] = '0'
 os.environ['WORLD_SIZE'] = '1'
 os.environ['MASTER_ADDR'] = '127.0.0.1'
@@ -36,12 +36,12 @@ def default_dir(dir):
 # Specify output directory here
 output_dir = "./output"
 default_dir(output_dir)
-Batch_Size = 32
-norm_type = '1-1' # recommend 1-1
-index='TUM_COND' # add _M for (inputs, labels,context) else (input, labels)
+Batch_Size = 4
+norm_type = 'none' # recommend 1-1
+index='TUM' # add _M for (inputs, labels,context) else (input, labels)
 data_state='outer3' # SQ_M: normal,inner(1,2,3),outer(1,2,3) SQV: NC,IF(1,2,3),OF(1,2,3)
 
-length=4000
+length=48000
 data_num=10
 patch = 8 if Batch_Size >= 64 else 4
 
@@ -182,14 +182,20 @@ def p_losses_spk(denoise_model, x_start, t, noise=None, loss_type="l1",context=N
     x_noisy = q_sample(x_start=x_start, t=t, noise=noise)
     pn_spk, pn_mem = denoise_model(x_noisy, t, context=context)
 
+    loss = .0
     if loss_type == 'l1':
-        loss = F.l1_loss(noise, pn_spk)
+        for i in range (pn_mem.shape[1]):
+            loss += F.l1_loss(noise, pn_mem[:, i, :].unsqueeze(1))
     elif loss_type == 'l2':
-        loss = F.mse_loss(noise, pn_spk)
+        for i in range (pn_mem.shape[1]):
+            loss += F.mse_loss(noise, pn_mem[:, i, :].unsqueeze(1))
     elif loss_type == "huber":
-        loss = F.smooth_l1_loss(noise, pn_spk)
+        for i in range (pn_mem.shape[1]):
+            loss += F.smooth_l1_loss(noise, pn_mem[:, i, :].unsqueeze(1))
     else:
         raise NotImplementedError()
+
+    loss = loss / float(pn_mem.shape[1])
 
     return loss
 

@@ -1,16 +1,18 @@
-import math
+# from model.diffusion.Unet1D_SNN import Unet1D_crossatt
 from model.diffusion.Unet1D import Unet1D_crossatt
 from model.diffusion.diffusion import GaussianDiffusion1D
-from evaluate.evaluate_utils import *
+from evaluate.evaluate_utils import eval_all, eval_fid, eval_is
 from dataset import *
+
+import torch
 from torch.utils.data import DataLoader
-from torch.optim import AdamW
 import os
 from pathlib import Path
-from torch.optim import lr_scheduler
 import umap.umap_ as umap
 from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
+import numpy as np
+
 from sklearn.preprocessing import StandardScaler
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '4'
@@ -38,7 +40,7 @@ Batch_Size = 1
 norm_type = '1-1' # recommend 1-1
 data_state='outer3' # SQ_M: normal,inner(1,2,3),outer(1,2,3) SQV: NC,IF(1,2,3),OF(1,2,3)
 
-length=4000
+length=48000
 data_num=10
 patch = 8 if Batch_Size >= 64 else 4
 cond_np=None
@@ -46,19 +48,19 @@ cond_np=None
 # diffusion para
 dif_object = 'pred_v'
 beta_schedule= 'linear' ## linear
-beta_start = 0.0001
-beta_end = 0.02
 timesteps = 1000
 loss_type='huber' # l1,l2,huber
 
 #use gpu
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-path_name = '2025_0522_180832'
+path_name = '250603_2'
 index='TUM_COND'
 epoch=400
 
 load_result = True
+print_pca = False
+print_umap = True
 
 datasets, data_np, cond = build_dataset(
     dataset_type=index,
@@ -81,50 +83,31 @@ train_dataloader = DataLoader(train_dataset, batch_size=Batch_Size, shuffle=True
 val_dataloader = DataLoader(val_dataset, batch_size=Batch_Size, shuffle=True, num_workers=8,drop_last=True)
 print("train_num:{};val_num:{}".format(len(train_dataset),len(val_dataset)))
 
-# define beta schedule
-def linear_beta_schedule(timesteps,beta_start = 0.0001,beta_end = 0.02):
-    return torch.linspace(beta_start, beta_end, timesteps)
+if not load_result:
+    model = Unet1D_crossatt(
+        dim=32,
+        num_layers=4,
+        dim_mults=(1, 2, 4, 8),
+        context_dim= length,
+        channels=1,
+        use_crossatt=False, # True for VGCDM, False for DDPM
+    )
 
-def cosine_beta_schedule(timesteps, s = 0.008):
-    steps = timesteps + 1
-    x = torch.linspace(0, timesteps, steps, dtype = torch.float)
-    alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * math.pi * 0.5) ** 2
-    alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
-    betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
-    return torch.clip(betas, 0, 0.999)
+    model.to(device)
 
-if beta_schedule =='cosine':
-    betas = cosine_beta_schedule(timesteps)
-else:
-    betas = linear_beta_schedule(
-        timesteps=timesteps,
-        beta_start=beta_start,
-        beta_end=beta_end)
+    model_ckpt = torch.load('/data/jionkim/VGCDM/output/' + index + '/' + path_name +'/output/model_' + str(epoch) + '.ckpt')
+    model.load_state_dict(model_ckpt)
 
-model = Unet1D_crossatt(
-    dim=32,
-    num_layers=4,
-    dim_mults=(1, 2, 4, 8),
-    context_dim= length,
-    channels=1,
-    use_crossatt=False, # True for VGCDM, False for DDPM
-)
+    diffusion = GaussianDiffusion1D(
+        model,
+        seq_length = length,
+        timesteps = timesteps, #1000
+        objective = dif_object, #'pred_v'
+        beta_schedule=beta_schedule,#'linear'
+        auto_normalize=False
+    )
 
-model.to(device)
-
-model_ckpt = torch.load('/data/jionkim/VGCDM/output/' + index + '/' + path_name +'/output/model_' + str(epoch) + '.ckpt')
-model.load_state_dict(model_ckpt)
-
-diffusion = GaussianDiffusion1D(
-    model,
-    seq_length = length,
-    timesteps = timesteps, #1000
-    objective = dif_object, #'pred_v'
-    beta_schedule=beta_schedule,#'linear'
-    auto_normalize=False
-)
-
-diffusion.to(device)
+    diffusion.to(device)
 
 # save_model path check
 save_path = '/data/jionkim/VGCDM/output/' + index + '/' + path_name + '/output/'
@@ -137,6 +120,11 @@ all_val_conds = []
 all_sampled_seqs = []
 all_psnr=[]
 all_cos=[]
+all_ssim=[]
+all_lpips=[]
+all_fid=[]
+all_mmd=[]
+all_emd=[]
 
 for i, (inputs, labels) in enumerate(val_dataloader):
     if i >= 360:
@@ -154,21 +142,27 @@ for i, (inputs, labels) in enumerate(val_dataloader):
     rsme_seqs.append(evl_out[0])
     all_psnr.append(evl_out[1])
     all_cos.append(evl_out[2])
+    # all_ssim.append(evl_out[3])
+    # all_lpips.append(evl_out[4])
+    # all_fid.append(evl_out[3])
+    all_mmd.append(evl_out[3])
+    all_emd.append(evl_out[4])
 
 all_sampled_seqs = np.array(all_sampled_seqs)
 all_sampled_seqs = all_sampled_seqs[:,0,0,:]
-all_sampled_seqs = np.swapaxes(all_sampled_seqs, 0, 1)
-
 all_val_inputs = np.array(all_val_inputs)
 all_val_inputs = all_val_inputs[:,0,0,:]
+
+fid_value = eval_fid(all_sampled_seqs, all_val_inputs)
+is_value = eval_is(all_sampled_seqs)
+
+all_sampled_seqs = np.swapaxes(all_sampled_seqs, 0, 1)
 all_val_inputs = np.swapaxes(all_val_inputs, 0, 1)
 
 # normalize gen & real data
-'''
 scaler = StandardScaler()
 data_real_scaled = scaler.fit_transform(all_val_inputs)
 data_fake_scaled = scaler.transform(all_sampled_seqs)
-'''
 
 combined_data = np.vstack([all_val_inputs, all_sampled_seqs])
 print(combined_data.shape)
@@ -201,35 +195,65 @@ print('[PSNR] MEAN : ' + str(psnr_mean) + ' / VAR : ' + str(psnr_var))
 all_frecos = np.concatenate(all_cos, axis=None).reshape(-1)
 cos_mean, cos_var = get_mean_dev(all_frecos)
 print('[COS] MEAN : ' + str(cos_mean) + ' / VAR : ' + str(cos_var))
+'''
+all_ssims = np.concatenate(all_ssim, axis=None).reshape(-1)
+ssim_mean, ssim_var = get_mean_dev(all_ssims)
+print('[SSIM] MEAN : ' + str(ssim_mean) + ' / VAR : ' + str(ssim_var))
+
+all_lpipses = np.concatenate(all_lpips, axis=None).reshape(-1)
+lpips_mean, lpips_var = get_mean_dev(all_lpipses)
+print('[LPIPS] MEAN : ' + str(lpips_mean) + ' / VAR : ' + str(lpips_var))
+'''
+# all_fids = np.concatenate(all_fid, axis=None).reshape(-1)
+# fid_mean, fid_var = get_mean_dev(all_fids)
+print('[FID] : ' + str(fid_value / 360.))
+# print('[IS] : ' + str(is_value))
+
+all_mmds = np.concatenate(all_mmd, axis=None).reshape(-1)
+mmd_mean, mmd_var = get_mean_dev(all_mmds)
+print('[MMD] MEAN : ' + str(mmd_mean) + ' / VAR : ' + str(mmd_var))
+
+all_emds = np.concatenate(all_emd, axis=None).reshape(-1)
+emd_mean, emd_var = get_mean_dev(all_emds)
+print('[EMD] MEAN : ' + str(emd_mean) + ' / VAR : ' + str(emd_var))
 
 # visualize (PCA)
-plt.subplot(1, 2, 1)
-plt.scatter(pca_embedding[labels == 0, 0], pca_embedding[labels == 0, 1],
-            c='red', label='Real Data', alpha=0.7)
-plt.scatter(pca_embedding[labels == 1, 0], pca_embedding[labels == 1, 1],
-            c='blue', label='Synthetic Data', alpha=0.7)
-plt.title("PCA Projection")
-plt.xlabel("PC1")
-plt.ylabel("PC2")
-plt.legend()
-plt.grid(True)
+if print_pca:
+    if print_umap:
+        plt.subplot(1, 2, 1)
+    else:
+        plt.plot()
+    plt.scatter(pca_embedding[labels == 0, 0], pca_embedding[labels == 0, 1],
+                c='red', label='Real Data', alpha=0.7)
+    plt.scatter(pca_embedding[labels == 1, 0], pca_embedding[labels == 1, 1],
+                c='blue', label='Synthetic Data', alpha=0.7)
+    plt.title("PCA Projection")
+    plt.xlabel("PC1")
+    plt.ylabel("PC2")
+    plt.legend()
+    plt.grid(True)
 
 # visualize (UMAP)
-plt.subplot(1, 2, 2)
-plt.scatter(
-    embedding[0:4000, 0], embedding[0:4000, 1],
-    c='red', label='Real Data', alpha=0.7
-)
-plt.scatter(
-    embedding[4000:8000, 0], embedding[4000:8000, 1],
-    c='blue', label='Synthetic Data', alpha=0.7
-)
-plt.title("UMAP Projection")
-plt.xlabel("X")
-plt.ylabel("Y")
-plt.legend()
-plt.grid(True)
+if print_umap:
+    if print_pca:
+        plt.subplot(1, 2, 2)
+    else:
+        plt.plot()
+    plt.scatter(
+        embedding[0:4000, 0], embedding[0:4000, 1],
+        c='red', label='Real Data', alpha=0.7
+    )
+    plt.scatter(
+        embedding[4000:8000, 0], embedding[4000:8000, 1],
+        c='blue', label='Synthetic Data', alpha=0.7
+    )
+    plt.title("UMAP Projection")
+    plt.xlabel("X")
+    plt.ylabel("Y")
+    plt.legend()
+    plt.grid(True)
 
-plt.tight_layout()
-plt.show()
+if print_pca or print_umap:
+    plt.tight_layout()
+    plt.show()
 # plt.savefig(save_path + 'proj_res.png')

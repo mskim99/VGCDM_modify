@@ -3,18 +3,13 @@ import math
 import torch
 
 from model.diffusion.Unet1D import Unet1D_crossatt
+# from model.diffusion.Unet1D_SNN import Unet1D_crossatt
 from model.diffusion.diffusion import GaussianDiffusion1D
 from evaluate.evaluate_utils import *
 from dataset import *
 from torch.utils.data import DataLoader
-from torch.optim import AdamW
 import os
 from pathlib import Path
-from torch.optim import lr_scheduler
-import umap.umap_ as umap
-from sklearn.decomposition import PCA
-import matplotlib.pyplot as plt
-from sklearn.preprocessing import StandardScaler
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '4'
 os.environ['RANK'] = '0'
@@ -38,7 +33,7 @@ def default_dir(dir):
 output_dir = "./output"
 default_dir(output_dir)
 Batch_Size = 1
-norm_type = '1-1' # recommend 1-1
+norm_type = 'none' # recommend 1-1
 data_state='outer3' # SQ_M: normal,inner(1,2,3),outer(1,2,3) SQV: NC,IF(1,2,3),OF(1,2,3)
 
 length=4000
@@ -57,7 +52,7 @@ loss_type='huber' # l1,l2,huber
 #use gpu
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-path_name = '2025_0522_180832'
+path_name = '2025_0603_172303'
 index='TUM_COND'
 epoch=400
 
