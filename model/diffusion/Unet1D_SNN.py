@@ -119,11 +119,9 @@ class Block(nn.Module):
         self.proj = WeightStandardizedConv1d(dim, dim_out, 3, padding = 1)
         self.norm = nn.GroupNorm(groups, dim_out)
         # self.act = nn.SiLU()
-        self.act = snn.Leaky(beta=0.95)
+        self.act = snn.Leaky(beta=0.9, reset_mechanism="subtract")
 
     def forward(self, x, scale_shift = None):
-
-        mem = self.act.init_leaky()
 
         x = self.proj(x)
         x = self.norm(x)
@@ -132,13 +130,13 @@ class Block(nn.Module):
             scale, shift = scale_shift
             x = x * (scale + 1) + shift
 
-        spk, mem = self.act(x, mem)
-        return spk, mem
+        mem = self.act.init_leaky()
+        spk, _ = self.act(x, mem)
+        return spk, _
 
 class ResnetBlock(nn.Module):
     def __init__(self, dim, dim_out, *, time_emb_dim = None, groups = 8):
         super().__init__()
-        self.act = snn.Leaky(beta=0.95)
         self.mlp = nn.Linear(time_emb_dim, dim_out * 2) if exists(time_emb_dim) else None
 
         self.block1 = Block(dim, dim_out, groups = groups)
@@ -147,22 +145,20 @@ class ResnetBlock(nn.Module):
 
     def forward(self, x, time_emb = None):
 
-        mem = self.act.init_leaky()
-
         scale_shift = None
         if exists(self.mlp) and exists(time_emb):
-
-            time_emb, mem = self.act(time_emb)
-
+            temp_act = snn.Leaky(beta=0.9, reset_mechanism="subtract")
+            t_mem = temp_act.init_leaky().cuda()
+            time_emb, _ = temp_act(time_emb, t_mem)
             time_emb = self.mlp(time_emb)
             time_emb = rearrange(time_emb, 'b c -> b c 1')
             scale_shift = time_emb.chunk(2, dim = 1)
 
-        h, mem = self.block1(x, scale_shift = scale_shift)
+        x_res = self.res_conv(x)
+        h, _ = self.block1(x, scale_shift = scale_shift)
+        h, _ = self.block2(h)
 
-        h, mem = self.block2(h)
-
-        return (h + self.res_conv(x)), mem
+        return h + x_res
 
 class LinearAttention(nn.Module):
     def __init__(self, dim, heads = 4, dim_head = 32):
@@ -266,7 +262,7 @@ class Unet1D(nn.Module):
             # nn.GELU(),
             # nn.Linear(time_dim, time_dim)
         )
-        self.time_act = snn.Leaky(beta=0.95)
+        self.time_act = snn.Leaky(beta=0.9, reset_mechanism="subtract")
         self.time_mlp2 = nn.Linear(time_dim, time_dim)
 
         # layers
@@ -316,7 +312,7 @@ class Unet1D(nn.Module):
         x = self.init_conv(x)
         r = x.clone()
         t = self.time_mlp1(time)
-        t, mem = self.time_act(t, mem)
+        t, _ = self.time_act(t, self.time_act.init_leaky())
         t = self.time_mlp2(t)
 
         h = []
@@ -444,7 +440,7 @@ class Unet1D_crossatt(nn.Module):
             # nn.SiLU(),
             # nn.Linear(time_dim, time_dim)
         )
-        self.time_act = snn.Leaky(beta=0.95)
+        self.time_act = snn.Leaky(beta=0.9, reset_mechanism="subtract")
         self.time_mlp2 = nn.Linear(time_dim, time_dim)
 
         # check cross attention dim
@@ -517,9 +513,9 @@ class Unet1D_crossatt(nn.Module):
         self.final_res_block = block_klass(dim * 2, dim, time_emb_dim=time_dim)
         self.final_conv = nn.Conv1d(dim, self.out_dim, kernel_size=7, padding=(7 - 1) // 2, dilation=1, bias=True)
 
-    def forward(self, x, time, x_self_cond=None,context=None):
+        self.final_norm = nn.GroupNorm(8, dim)
 
-        mem = self.time_act.init_leaky()
+    def forward(self, x, time, x_self_cond=None,context=None):
 
         b,c,l=x.shape
         if self.self_condition:
@@ -530,17 +526,17 @@ class Unet1D_crossatt(nn.Module):
         r = x.clone()
 
         t = self.time_mlp1(time)
-        t, mem= self.time_act(t, mem)
+        t, _ = self.time_act(t, self.time_act.init_leaky())
         t = self.time_mlp2(t)
 
         h = []
 
         # in forward method
         for block1, block2, attn, downsample in self.downs:
-            x, mem = block1(x, t)
+            x = block1(x, t)
             h.append(x)
 
-            x, mem = block2(x, t)
+            x = block2(x, t)
             if self.use_crossatt:
                 cond_list = [context for i in range(c)]
                 cond = torch.cat(cond_list, dim=1)
@@ -551,7 +547,8 @@ class Unet1D_crossatt(nn.Module):
             h.append(x)
 
             x = downsample(x)
-        x, mem = self.mid_block1(x, t)
+
+        x = self.mid_block1(x, t)
 
         if self.use_crossatt:
             cond_list = [context for i in range(c)]
@@ -559,14 +556,16 @@ class Unet1D_crossatt(nn.Module):
             x = self.mid_attn(x, cond)
         else:
             x = self.mid_attn(x)
-        x, mem = self.mid_block2(x, t)
+
+        x = self.mid_block2(x, t)
 
         for block1, block2, attn,  upsample in self.ups:
             x = torch.cat((x, h.pop()), dim=1)
-            x, mem = block1(x, t)
+            x = block1(x, t)
 
             x = torch.cat((x, h.pop()), dim=1)
-            x, mem = block2(x, t)
+            x = block2(x, t)
+
             if self.use_crossatt:
                 cond_list = [context for i in range(c)]
                 cond = torch.cat(cond_list, 1)
@@ -578,7 +577,13 @@ class Unet1D_crossatt(nn.Module):
 
         x = torch.cat((x, r), dim=1)
 
-        x, mem = self.final_res_block(x, t)
+        mem = self.final_res_block.block2.act.init_leaky()
+        _, mem = self.final_res_block.block2.act(x, mem)
+
+        x = self.final_res_block(x, t)
+
+        x = self.final_norm(x)
+
         return self.final_conv(x), mem
 
 if __name__=="__main__":

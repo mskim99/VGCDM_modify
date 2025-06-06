@@ -1,8 +1,8 @@
 import torch
 import numpy as np
 import math
-# from model.diffusion.Unet1D import Unet1D_crossatt
-from model.diffusion.Unet1D_SNN import Unet1D_crossatt
+from model.diffusion.Unet1D import Unet1D_crossatt
+# from model.diffusion.Unet1D_SNN import Unet1D_crossatt
 from model.diffusion.diffusion import GaussianDiffusion1D
 from dataset import *
 from torch.utils.data import DataLoader
@@ -36,24 +36,16 @@ def default_dir(dir):
 # Specify output directory here
 output_dir = "./output"
 default_dir(output_dir)
-Batch_Size = 64
+Batch_Size = 1
 norm_type = '1-1' # recommend 1-1
 index='TUM_COND' # add _M for (inputs, labels,context) else (input, labels)
 data_state='outer3' # SQ_M: normal,inner(1,2,3),outer(1,2,3) SQV: NC,IF(1,2,3),OF(1,2,3)
 
+path_name = '250522_9'
 length=4000
 data_num=10
 patch = 8 if Batch_Size >= 64 else 4
-
-cond_np=None
-# time
-new_dir=default_dir(os.path.join(output_dir,index))
-cur_time=datetime.datetime.now().strftime('%Y_%m%d_%H%M%S')
-time_out_dir=default_dir(os.path.join(new_dir,cur_time))
-logger = create_logger(output_dir=time_out_dir,  name=f"{index}.txt")
-logger.info("index:{},norm_type:{};data_num:{}"
-                .format(index,norm_type,data_num))
-
+epoch=400
 
 # diffusion para
 dif_object = 'pred_v'
@@ -64,6 +56,8 @@ timesteps = 1000
 epochs = 401
 loss_type='huber' # l1,l2,huber
 
+path_dir=default_dir(os.path.join(output_dir,path_name))
+logger = create_logger(output_dir=path_dir,  name=f"{index}.txt")
 logger.info("dif_object:{},beta_schedule:{},beta:{}-{};epochs:{};diffusion time step:{};loss type:{}"
                 .format(dif_object,beta_schedule,beta_start,beta_end,epochs,timesteps,loss_type))
 
@@ -87,15 +81,6 @@ elif index=="TUM_COND":
 else:
     raise ('unexpected data index, please choose data index form TUM, TUM_COND')
 
-# plot origin data
-logger.info("condition:{}".format(cond))
-'''
-ori_path=os.path.join(time_out_dir,cur_time+cond+'_ori.png')
-if '_M' in index:
-    plot_np(y=data_np,z=cond_np,patch=patch,path= ori_path,show_mode=False)
-else:
-    plot_np(y=data_np,patch=patch,path= ori_path,show_mode=False)
-'''
 train_dataset,val_dataset=get_loaders(
     datasets['train'],
     val_ratio=0.3,
@@ -157,12 +142,16 @@ def q_sample(x_start, t, noise=None):
 
     return sqrt_alphas_cumprod_t * x_start + sqrt_one_minus_alphas_cumprod_t * noise
 
-def p_losses(denoise_model, x_start, t, noise=None, loss_type="l1",context=None):
+def p_losses_ft(denoise_model, x_start, t, amp, shift, noise=None, loss_type="l1",context=None):
     if noise is None:
         noise = torch.randn_like(x_start)
 
     x_noisy = q_sample(x_start=x_start, t=t, noise=noise)
     predicted_noise = denoise_model(x_noisy, t, context=context)
+
+    predicted_noise = (predicted_noise - predicted_noise.min()) / (predicted_noise.max() - predicted_noise.min())
+    predicted_noise = 2. * predicted_noise - 1.
+    predicted_noise = amp * predicted_noise + shift
 
     if loss_type == 'l1':
         loss = F.l1_loss(noise, predicted_noise)
@@ -183,17 +172,17 @@ def p_losses_spk(denoise_model, x_start, t, noise=None, loss_type="l1",context=N
     pn_spk, pn_mem = denoise_model(x_noisy, t, context=context)
     loss = .0
     if loss_type == 'l1':
-        # for i in range (pn_mem.shape[1]):
-            # loss += F.l1_loss(noise, pn_mem[:, i, :].unsqueeze(1))
-        loss = F.l1_loss(noise, pn_spk) * 100.
+        for i in range (pn_mem.shape[1]):
+            loss += F.l1_loss(noise, pn_mem[:, i, :].unsqueeze(1))
+        # loss = F.l1_loss(noise, pn_spk) * 100.
     elif loss_type == 'l2':
-        # for i in range (pn_mem.shape[1]):
-            # loss += F.mse_loss(noise, pn_mem[:, i, :].unsqueeze(1))
-        loss = F.mse_loss(noise, pn_spk) * 100.
+        for i in range (pn_mem.shape[1]):
+            loss += F.mse_loss(noise, pn_mem[:, i, :].unsqueeze(1))
+        # loss = F.mse_loss(noise, pn_spk) * 100.
     elif loss_type == "huber":
-        # for i in range (pn_mem.shape[1]):
-            # loss += F.smooth_l1_loss(noise, pn_mem[:, i, :].unsqueeze(1))
-        loss = F.smooth_l1_loss(noise, pn_spk) * 100.
+        for i in range (pn_mem.shape[1]):
+            loss += F.smooth_l1_loss(noise, pn_mem[:, i, :].unsqueeze(1))
+        # loss = F.smooth_l1_loss(noise, pn_spk) * 100.
     else:
         raise NotImplementedError()
 
@@ -212,9 +201,16 @@ model = Unet1D_crossatt(
 
 model.to(device)
 
-optimizer = AdamW(params=model.parameters(),lr=1e-5,betas=(0.9, 0.999), eps=1e-08,weight_decay=0.1)
+model_ckpt = torch.load('/data/jionkim/VGCDM/output/' + index + '/' + path_name +'/output/model_' + str(epoch) + '.ckpt')
+model.load_state_dict(model_ckpt)
+
+optimizer = AdamW(params=model.parameters(),lr=1e-6,betas=(0.9, 0.999), eps=1e-08)
 scheduler = lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.1)
 # optimizer = Adam(model.parameters(), lr=1e-4)
+
+waspnet = torch.load('pretrained/weight_epoch_3000.pkl', weights_only=False)
+waspnet = waspnet.cuda()
+waspnet.eval()
 
 diffusion = GaussianDiffusion1D(
     model,
@@ -228,7 +224,7 @@ diffusion = GaussianDiffusion1D(
 diffusion.to(device)
 
 # save_model path check
-save_path = time_out_dir + '/output/'
+save_path = path_name + '/output/'
 logger.info("output_path:{}".format(save_path))
 Path(save_path).mkdir(parents=True, exist_ok=True)
 
@@ -241,9 +237,19 @@ for epoch in range(epochs):
       batch = inputs.to(device).float()
       context = labels.to(device).float()
 
+      inputs_predict = (inputs - inputs.min()) / (inputs.max() - inputs.min())
+      inputs_predict = 2. * inputs_predict - 1.
+      inputs_predict = inputs_predict.to(device).float()
+
+      context_predict = context.unsqueeze(1).int()
+
+      predict_data = waspnet(inputs_predict, context_predict)
+      predict_amp = predict_data[:, 0]
+      predict_shift = predict_data[:, 1]
+
       t = torch.randint(0, timesteps, (batch_size,), device=device).long()
-      # loss = p_losses(model, batch, t, loss_type=loss_type, context=None)
-      loss = p_losses_spk(model, batch, t, loss_type=loss_type, context=context)
+      loss = p_losses_ft(model, batch, t, predict_amp, predict_shift, loss_type=loss_type, context=context)
+      # loss = p_losses_spk(model, batch, t, loss_type=loss_type, context=context)
       if step % 100 == 0:
         learning_rate = optimizer.param_groups[0]['lr']
         memory_used = torch.cuda.max_memory_allocated() / (1024.0 * 1024.0)
@@ -251,12 +257,12 @@ for epoch in range(epochs):
 
       loss.backward()
       optimizer.step()
-    scheduler.step()
+    # scheduler.step()
 
     if epoch % 20 == 0:
-        # Save checkpoint
-        save_name = 'model_' + str(epoch).zfill(3) + '.ckpt'
+        save_name = 'model_ft_' + str(epoch) + '.ckpt'
+        # Save checkpointfill(3) + '.ckpt'
         torch.save(model.state_dict(), save_path + save_name)
 
         sampled_seq = diffusion.sample(batch_size=1, cond=None)
-        np.save(save_path + 'output_' + str(epoch).zfill(3) + '.npy', arr=sampled_seq.cpu().numpy())
+        np.save(save_path + 'output_ft_' + str(epoch).zfill(3) + '.npy', arr=sampled_seq.cpu().numpy())
